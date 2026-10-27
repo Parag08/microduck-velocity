@@ -1,0 +1,14 @@
+# the Isaac Lab 3.0.0 clone (upstream git repo, 8.5 GB)
+repo/
+
+# generated index + corpus data (rebuild with build/update.sh)
+index/
+data/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# run artifacts
+logs/
