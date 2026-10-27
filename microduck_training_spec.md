@@ -162,3 +162,29 @@ The actor receives `velocity_commands` (3), `head_pose_commands` (4), `body_pose
 - `run.json`, `git/repo.diff` — provenance
 - `exported/policy.pt` (TorchScript, normalizer included), `exported/policy.onnx` (+ `.data`)
 - console log: `~/duck_train.log`; driver script: `~/isaaclab-tutor/duck_drive.py`
+
+## 13. How to reproduce
+
+Train (this machine: 8 GB RTX 3070 Laptop, Newton/Warp backs the physics, no Isaac Sim; the PPO
+config itself asks for 50,000 iterations, the run above was stopped by hand at 7,638):
+
+```bash
+cd ~/isaaclab-tutor/repo
+uv run isaaclab train --rl_library rsl_rl --task IsaacContrib-Velocity-Flat-MicroDuck \
+  --num_envs 1024 --logger tensorboard
+# artifacts: logs/rsl_rl/microduck_velocity_flat/<timestamp>/
+```
+
+Drive a checkpoint (from the repo venv so `isaaclab` imports resolve; `PYGLFW_LIBRARY_VARIANT=x11`
+is required on this Wayland desktop or newton_gl dies with `undefined symbol: glfwGetX11Window`):
+
+```bash
+cd ~/isaaclab-tutor/repo
+DISPLAY=:0 PYGLFW_LIBRARY_VARIANT=x11 uv run python ../duck_drive.py \
+  --checkpoint logs/rsl_rl/microduck_velocity_flat/2026-10-27_14-41-49/model_7500.pt \
+  --num_envs 2 --log_every 20
+# click the Newton viewer window first, then I/U forward-back, J/L turn, K stop
+```
+
+Scripted smoke test (no keyboard): add `--auto` — 120 steps forward, 120 forward+turn, 120 forward,
+then stop; it logs commanded vs measured base velocity every `--log_every` steps.
