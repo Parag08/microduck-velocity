@@ -8,7 +8,8 @@ Task id: `IsaacContrib-Velocity-Flat-MicroDuck` — a contributed task that ship
 (`source/isaaclab_tasks/isaaclab_tasks/contrib/microduck/`). Nothing in this repo changes the task; it
 records and drives it.
 
-(The ISAAC-TUTOR app that shares this directory keeps its documentation in [`TUTOR.md`](TUTOR.md).)
+(This work was done alongside ISAAC-TUTOR, a local Isaac Lab tutoring app. Its code lives outside this repo
+and is not published; [`TUTOR.md`](TUTOR.md) is kept only as documentation of how it was set up.)
 
 ## Untrained vs trained
 
@@ -44,6 +45,7 @@ walks, it does not track accurately, and it has not learned to stand still (see 
 - `record_duck_video.py` — headless 720p recorder. Builds the env, loads a checkpoint, steps it with a fixed
   velocity command, tracks the trunk with the camera, writes an mp4 through Isaac Lab's `VideoRecorderCfg`.
 - `media/` — the four clips above.
+- `TUTOR.md` — notes on the ISAAC-TUTOR app (documentation only; its code is not in this repo).
 
 ## Setup
 
@@ -91,6 +93,31 @@ uv run python ../record_duck_video.py --checkpoint <model.pt> \
 Headless: `--width/--height` (default 1280×720), `--fps` (default 50, matching the 50 Hz policy rate),
 `--eye/--lookat/--focal_length` for the camera, `--no_follow` to keep it fixed. Frames come from a headless
 `newton_gl` visualizer, so no window and no display are needed.
+
+Both scripts check that `--checkpoint` points to an existing file before starting the simulator. Run either
+with `--help` for the full flag list (it includes Isaac Lab's launcher and rsl_rl flags).
+
+## Next steps
+
+Drawn from the achieved metrics in §11 of [`microduck_training_spec.md`](microduck_training_spec.md) and the
+measurements above. None of these is done yet.
+
+- **Better velocity tracking.** The run ends at `error_vel_xy` 0.214 m/s and `error_vel_yaw` 0.520 rad/s; on
+  a 0.3 m/s command the trained duck moves at 0.08–0.15 m/s. The run was stopped at 7,638 of the configured
+  50,000 iterations, so the first thing to try is simply training longer (resume from `model_7500.pt`), then
+  look at the balance between `track_lin_vel`/`track_ang_vel` and the penalties that ramp up in the
+  curriculum (`action_rate_l2` reaches −1.0).
+- **Learning to stand still.** A zero command does not produce a still duck. The curriculum raises
+  `rel_standing_envs` to 0.25 by iteration 2000; check how the standing envs score on `pose` and
+  `track_lin_vel`, and measure drift under `vx = vy = wz = 0` (e.g. `duck_drive.py --auto`, whose last phase
+  is a stop command).
+- **ONNX export.** The run directory already holds `exported/policy.onnx` and `exported/policy.pt` (§12).
+  What is missing is a check that the exported model reproduces the PyTorch policy on the 61-dim actor
+  observation (§4) and a small standalone runner that does not need Isaac Lab.
+- **Sim-to-real on hardware.** Run the exported policy on a physical MicroDuck: build the 61-number
+  observation from the real IMU and servo encoders in the order of §4, apply actions as joint-position
+  offsets per §5, at 50 Hz, and compare against the randomisation ranges in §8 (latency, encoder bias,
+  friction, supply voltage). Expect `fell_over` (13.9% of episodes in sim) to be the first thing to fix.
 
 ## License
 

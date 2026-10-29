@@ -15,13 +15,25 @@ Keys (click the Newton viewer window first, it acts like any desktop app):
     K : stop
     Esc / close window : quit
 
-With ``--auto`` the script ignores the keyboard and runs a scripted command sequence instead,
-which is useful for a headless smoke test of the command -> policy -> sim path.
+With ``--auto`` the script ignores the keyboard and runs a scripted command sequence instead
+(forward, forward + left turn, forward, then stop; each phase ``--auto_phase_steps`` long),
+which is useful for a smoke test of the command -> policy -> sim path.
+
+Usage (run from inside the Isaac Lab 3.0 clone so ``isaaclab`` imports resolve)::
+
+    cd ~/IsaacLab
+    DISPLAY=:0 PYGLFW_LIBRARY_VARIANT=x11 uv run python ../duck_drive.py \
+        --checkpoint logs/rsl_rl/microduck_velocity_flat/<run>/model_7500.pt \
+        --num_envs 2 --log_every 20
+
+    # scripted smoke test, no keyboard
+    uv run python ../duck_drive.py --checkpoint <model.pt> --auto
+
+``PYGLFW_LIBRARY_VARIANT=x11`` is needed on a Wayland desktop. Run with ``--help`` for all flags.
 """
 
 import argparse
-import math
-import time
+import os
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
@@ -30,17 +42,37 @@ from isaaclab_rl.entrypoints.backends import cli_args_rsl_rl as cli_args
 TASK = "IsaacContrib-Velocity-Flat-MicroDuck"
 RL_LIBRARY = "rsl_rl"
 
-parser = argparse.ArgumentParser(description="Drive a MicroDuck policy interactively.")
+parser = argparse.ArgumentParser(
+    description="Drive a trained MicroDuck velocity policy from the keyboard (or a scripted sequence with --auto).",
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+)
+# --checkpoint (required here) / --experiment_name / --resume / --seed come from the rsl_rl CLI group
 cli_args.add_rsl_rl_args(parser)
 parser.add_argument("--num_envs", type=int, default=2, help="Number of ducks to spawn.")
 parser.add_argument("--forward_speed", type=float, default=0.3, help="Forward command [m/s] (task range is +/-0.4).")
 parser.add_argument("--yaw_rate", type=float, default=0.6, help="Turn command [rad/s] (task range is +/-1.0).")
 parser.add_argument("--auto", action="store_true", help="Ignore the keyboard and run a scripted command sequence.")
-parser.add_argument("--log_every", type=int, default=30, help="Print commanded vs measured velocity every N steps.")
+parser.add_argument(
+    "--auto_phase_steps",
+    type=int,
+    default=120,
+    help="With --auto: policy steps per phase (forward, forward+turn, forward), then stop. 120 = 2.4 s at 50 Hz.",
+)
+parser.add_argument(
+    "--log_every", type=int, default=30, help="Print commanded vs measured velocity every N steps (0 = never)."
+)
 add_launcher_args(parser)
 # the MicroDuck task ships a Newton MJWarp solver config; a visualizer must be requested explicitly
 parser.set_defaults(visualizer=["newton_gl"])
 args_cli = parser.parse_args()
+
+# fail fast, before the simulator starts, if the checkpoint is missing
+if not args_cli.checkpoint:
+    parser.error("--checkpoint is required: path to an rsl_rl model_*.pt file (e.g. logs/rsl_rl/<run>/model_7500.pt)")
+if not os.path.isfile(args_cli.checkpoint):
+    parser.error(f"--checkpoint file not found: {os.path.abspath(args_cli.checkpoint)}")
+if args_cli.auto_phase_steps <= 0:
+    parser.error("--auto_phase_steps must be positive")
 
 import torch
 from rsl_rl.runners import OnPolicyRunner
@@ -77,6 +109,12 @@ class DuckDriver:
             for v in self.env.unwrapped.sim.visualizers
             if getattr(v.cfg.backend, "visualizer_type", None) in {"newton_gl", "newton_rtx"}
         ]
+        if not self._viewers and not args_cli.auto:
+            print(
+                "[WARN]: no newton_gl/newton_rtx viewer found, so keyboard input cannot be read. "
+                "Use --auto, or run with a display.",
+                flush=True,
+            )
         self._keys_down: set[str] = set()
         self._manual_command = torch.zeros(3, device=self.device)
 
@@ -142,11 +180,12 @@ def main() -> None:
         step = 0
         # scripted sequence used by --auto: (first_step, last_step, command)
         fwd, yaw = args_cli.forward_speed, args_cli.yaw_rate
+        n = args_cli.auto_phase_steps
         script = [
-            (0, 120, torch.tensor([fwd, 0.0, 0.0])),
-            (120, 240, torch.tensor([fwd, 0.0, yaw])),
-            (240, 360, torch.tensor([fwd, 0.0, 0.0])),
-            (360, 10**9, torch.tensor([0.0, 0.0, 0.0])),
+            (0, n, torch.tensor([fwd, 0.0, 0.0])),
+            (n, 2 * n, torch.tensor([fwd, 0.0, yaw])),
+            (2 * n, 3 * n, torch.tensor([fwd, 0.0, 0.0])),
+            (3 * n, 10**9, torch.tensor([0.0, 0.0, 0.0])),
         ]
         try:
             while sim.is_running():

@@ -7,15 +7,23 @@ Wraps the Isaac Lab 3.0 video recorder: a headless ``newton_gl`` visualizer rend
 scene at ``--width`` x ``--height`` and ``VideoRecorderCfg`` writes the frames to mp4 with
 moviepy (needs the repo's ``video`` extra: ``uv sync --extra video``).
 
-Examples (run from ``~/isaaclab-tutor/repo``):
+The env runs with one steady ``base_velocity`` command (``--forward_speed``, ``--yaw_rate``),
+random pushes and the curriculum disabled, and the camera follows the trunk unless
+``--no_follow`` is given. No window or display is needed.
+
+Usage (run from inside the Isaac Lab 3.0 clone so ``isaaclab`` imports resolve)::
+
+    cd ~/IsaacLab
 
     # untrained policy: falls over, episodes reset
     uv run python ../record_duck_video.py --checkpoint logs/.../model_0.pt \
-        --out videos --name untrained --steps 250
+        --out ../media --name duck_untrained --steps 300
 
     # trained policy: walks on command
     uv run python ../record_duck_video.py --checkpoint logs/.../model_7500.pt \
-        --out videos --name trained --steps 500 --forward_speed 0.3
+        --out ../media --name duck_trained --steps 500 --forward_speed 0.3
+
+Run with ``--help`` for all flags.
 """
 
 import argparse
@@ -30,24 +38,41 @@ from isaaclab_visualizers.newton.newton_visualizer_cfg import NewtonGLBackendCfg
 
 TASK = "IsaacContrib-Velocity-Flat-MicroDuck"
 
-parser = argparse.ArgumentParser(description="Record a MicroDuck checkpoint to mp4.")
+parser = argparse.ArgumentParser(
+    description="Record a MicroDuck velocity checkpoint to mp4 with a headless newton_gl camera.",
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+)
 add_launcher_args(parser)
-# --checkpoint / --experiment_name / --resume / --seed come from the rsl_rl CLI group
+# --checkpoint (required here) / --experiment_name / --resume / --seed come from the rsl_rl CLI group
 cli_args.add_rsl_rl_args(parser)
 parser.add_argument("--out", default="videos", help="Output directory for the mp4.")
 parser.add_argument("--name", default="duck", help="Output filename stem.")
 parser.add_argument("--steps", type=int, default=400, help="Env steps to record (50 Hz policy -> 400 = 8 s).")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of ducks in frame.")
-parser.add_argument("--width", type=int, default=1280)
-parser.add_argument("--height", type=int, default=720)
+parser.add_argument("--width", type=int, default=1280, help="Video width [px].")
+parser.add_argument("--height", type=int, default=720, help="Video height [px].")
 parser.add_argument("--fps", type=int, default=50, help="Output frame rate (policy runs at 50 Hz).")
 parser.add_argument("--forward_speed", type=float, default=0.3, help="Forward velocity command [m/s].")
 parser.add_argument("--yaw_rate", type=float, default=0.0, help="Yaw rate command [rad/s].")
 parser.add_argument("--eye", type=float, nargs=3, default=(0.85, -0.85, 0.42), help="Camera eye [m].")
 parser.add_argument("--lookat", type=float, nargs=3, default=(0.0, 0.0, 0.12), help="Camera target [m].")
 parser.add_argument("--focal_length", type=float, default=50.0, help="Camera focal length [mm].")
-parser.add_argument("--no_follow", action="store_true", help="Keep the camera fixed instead of tracking the duck.")
+parser.add_argument(
+    "--no_follow",
+    action="store_true",
+    help="Keep the camera fixed at --eye/--lookat instead of offsetting them from the duck's root.",
+)
+parser.add_argument("--log_every", type=int, default=50, help="Print recording progress every N steps (0 = never).")
 args_cli = parser.parse_args()
+
+# fail fast, before the simulator starts, on a missing checkpoint or bad sizes
+if not args_cli.checkpoint:
+    parser.error("--checkpoint is required: path to an rsl_rl model_*.pt file (e.g. logs/rsl_rl/<run>/model_7500.pt)")
+if not os.path.isfile(args_cli.checkpoint):
+    parser.error(f"--checkpoint file not found: {os.path.abspath(args_cli.checkpoint)}")
+for _flag in ("steps", "num_envs", "width", "height", "fps"):
+    if getattr(args_cli, _flag) <= 0:
+        parser.error(f"--{_flag} must be positive")
 
 import torch
 from rsl_rl.runners import OnPolicyRunner
@@ -120,8 +145,16 @@ def main() -> None:
 
         # the headless newton_gl visualizer created for the recorder; camera is set on it directly
         viz = next(
-            v for v in env.unwrapped.sim.visualizers if v.cfg.backend.visualizer_type == "newton_gl"
+            (
+                v
+                for v in env.unwrapped.sim.visualizers
+                if getattr(v.cfg.backend, "visualizer_type", None) == "newton_gl"
+            ),
+            None,
         )
+        if viz is None:
+            env.close()
+            raise RuntimeError("no newton_gl visualizer was created; cannot point the recording camera")
         offset = torch.tensor(args_cli.eye, device=device)
         target_offset = torch.tensor(args_cli.lookat, device=device)
 
@@ -141,14 +174,17 @@ def main() -> None:
                 obs = env.get_observations()
                 env.step(policy(obs))
                 step += 1
-                if step % 50 == 0:
+                if args_cli.log_every > 0 and step % args_cli.log_every == 0:
                     print(f"[INFO]: recorded {step}/{args_cli.steps} steps", flush=True)
 
         env.close()
 
     clips = sorted(glob.glob(os.path.join(out_dir, f"{args_cli.name}_*.mp4")), key=os.path.getmtime)
     if not clips:
-        raise RuntimeError(f"no clip written to {out_dir}")
+        raise RuntimeError(
+            f"no clip matching {args_cli.name}_*.mp4 was written to {out_dir} "
+            "(is moviepy installed? `uv sync --extra video`)"
+        )
     clip = clips[-1]
     print(f"[INFO]: wrote {clip} ({os.path.getsize(clip) / 1e6:.2f} MB)", flush=True)
 

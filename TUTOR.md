@@ -1,5 +1,10 @@
 # ISAAC-TUTOR
 
+> **Note:** the ISAAC-TUTOR code (`cli.py`, `tutor/`, `app/`, `build/`, `curriculum.json`) lives outside this
+> repository and is not published. This file is kept as documentation of how the tutor was set up and what it
+> measured on the training machine; the paths and commands below refer to that private checkout, not to files
+> in this repo.
+
 A local bot that is an expert on **NVIDIA Isaac Lab** (the `isaac-sim/IsaacLab` repository) and teaches
 you reinforcement learning in a simulated environment — grounded in the actual documentation and source
 code, with a citation for every claim.
