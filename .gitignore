@@ -10,5 +10,6 @@ data/
 __pycache__/
 *.pyc
 
-# run artifacts
+# run artifacts (checkpoints are ~4.8 MB each; keep them out of git)
 logs/
+*.pt
